@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from datetime import datetime
 from typing import List, Optional
 from dotenv import load_dotenv
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 # Cleaned up imports at the top
 from ai_service import prioritize_tasks_with_ai, breakdown_task_with_ai
@@ -114,10 +116,7 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success", "message": f"Task {task_id} successfully deleted"}
 
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-import os
-
+# --- STATIC FRONTEND ROUTING BLOCK ---
 b_dir = os.path.dirname(os.path.abspath(__file__))
 dist_dir = os.path.join(b_dir, "dist")
 
@@ -130,7 +129,7 @@ async def get_favicon():
     fav_path = os.path.join(dist_dir, "taskfavicon.jpg")
     if os.path.exists(fav_path):
         return FileResponse(fav_path)
-    return HTTPException(status_code=404)
+    raise HTTPException(status_code=404, detail="Favicon missing")  # FIXED: Now correctly raising
 
 # Mount the entire directory to handle everything else (assets, scripts, layout images)
 app.mount("/", StaticFiles(directory=dist_dir, html=True), name="static")
