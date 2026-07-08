@@ -113,3 +113,15 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
     db.delete(task)
     db.commit()
     return {"status": "success", "message": f"Task {task_id} successfully deleted"}
+
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import os
+
+# 1. Mount the assets folder for CSS/JS scripts
+app.mount("/assets", StaticFiles(directory="dist/assets"), name="assets")
+
+# 2. Catch-all route to serve your index.html homepage
+@app.get("/{catchall:path}")
+async def serve_frontend(catchall: str):
+    return FileResponse("dist/index.html")
