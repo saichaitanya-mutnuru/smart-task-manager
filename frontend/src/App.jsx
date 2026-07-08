@@ -4,7 +4,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 
 // Base URL configuration for Axios
 const API_BASE = import.meta.env.PROD 
-  ? 'https://your-backend-service-name.onrender.com' 
+  ? 'https://smart-task-manager-bjzv.onrender.com'
   : '/api';
 
 function App() {
