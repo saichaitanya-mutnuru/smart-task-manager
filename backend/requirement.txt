@@ -1,7 +1,0 @@
-fastapi
-uvicorn
-langchain-google-genai
-sqlalchemy
-pymysql
-pydantic
-python-dotenv
