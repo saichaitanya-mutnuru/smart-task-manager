@@ -32,7 +32,6 @@ function App() {
       await fetchTasks();
     };
     loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // FIXED: Patched production endpoint mapping
