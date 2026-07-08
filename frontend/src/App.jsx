@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
+// Base URL configuration for Axios
+const API_BASE = import.meta.env.PROD 
+  ? 'https://your-backend-service-name.onrender.com' 
+  : '/api';
+
 function App() {
   const [tasks, setTasks] = useState([]);
   const [title, setTitle] = useState('');
@@ -12,9 +17,10 @@ function App() {
   const [breakdownLoadingId, setBreakdownLoadingId] = useState(null);
   const [taskSubTasks, setTaskSubTasks] = useState({});
 
+  // FIXED: Patched production endpoint mapping
   const fetchTasks = async () => {
     try {
-      const response = await axios.get('/api/tasks');
+      const response = await axios.get(`${API_BASE}/tasks`);
       setTasks(response.data);
     } catch (error) {
       console.error("Error fetching tasks:", error);
@@ -22,7 +28,6 @@ function App() {
   };
 
   useEffect(() => {
-    // Defining it inside isolates the linter context safely
     const loadData = async () => {
       await fetchTasks();
     };
@@ -30,11 +35,12 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // FIXED: Patched production endpoint mapping
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!title.trim()) return;
     try {
-      await axios.post('/api/tasks', {
+      await axios.post(`${API_BASE}/tasks`, {
         title,
         description,
         priority,
@@ -50,10 +56,11 @@ function App() {
     }
   };
 
+  // FIXED: Patched production endpoint mapping
   const handleOptimize = async () => {
     setLoading(true);
     try {
-      await axios.post('/api/tasks/optimize');
+      await axios.post(`${API_BASE}/tasks/optimize`);
       await fetchTasks();
     } catch (error) {
       console.error("Error optimizing tasks:", error);
@@ -62,30 +69,32 @@ function App() {
     }
   };
 
+  // FIXED: Patched production endpoint mapping
   const handleComplete = async (id) => {
     try {
-      await axios.put(`/api/tasks/${id}/complete`);
+      await axios.put(`${API_BASE}/tasks/${id}/complete`);
       fetchTasks();
     } catch (error) {
       console.error("Error completing task:", error);
     }
   };
 
-  // New Delete Handler Engine
+  // FIXED: Patched production endpoint mapping
   const handleDelete = async (id) => {
     if (!window.confirm("Are you sure you want to delete this task?")) return;
     try {
-      await axios.delete(`/api/tasks/${id}`);
+      await axios.delete(`${API_BASE}/tasks/${id}`);
       fetchTasks();
     } catch (error) {
       console.error("Error deleting task:", error);
     }
   };
 
+  // FIXED: Patched production endpoint mapping
   const handleBreakdown = async (id) => {
     setBreakdownLoadingId(id);
     try {
-      const response = await axios.post(`/api/tasks/${id}/breakdown`);
+      const response = await axios.post(`${API_BASE}/tasks/${id}/breakdown`);
       setTaskSubTasks(prev => ({ ...prev, [id]: response.data.sub_tasks }));
     } catch (error) {
       console.error("Error creating task breakdown:", error);
@@ -197,19 +206,16 @@ function App() {
                     )}
                   </div>
                   
-                  {/* Status Badge Tag and Delete Trigger Layout Container */}
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '12px' }}>
                     <span style={{ fontSize: '11px', fontWeight: '700', padding: '4px 10px', borderRadius: '6px', textTransform: 'uppercase', tracking: '0.5px', background: task.priority === 'High' ? '#fee2e2' : task.priority === 'Medium' ? '#fef3c7' : '#f1f5f9', color: task.priority === 'High' ? '#991b1b' : task.priority === 'Medium' ? '#92400e' : '#475569' }}>
                       {task.priority}
                     </span>
-                    {/* Delete Icon Trigger button */}
                     <button onClick={() => handleDelete(task.id)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '14px', padding: '4px', borderRadius: '4px', transition: 'color 0.2s' }} title="Delete Task" onMouseOver={(e) => e.target.style.color = '#ef4444'} onMouseOut={(e) => e.target.style.color = '#94a3b8'}>
                       🗑️
                     </button>
                   </div>
                 </div>
 
-                {/* Subtask listing block */}
                 {taskSubTasks[task.id] && (
                   <div style={{ marginTop: '16px', padding: '14px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
                     <h5 style={{ margin: '0 0 8px 0', fontSize: '12px', color: '#0369a1', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>AI Recommended Checklist</h5>
