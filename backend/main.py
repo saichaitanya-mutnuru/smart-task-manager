@@ -1,0 +1,126 @@
+import os
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from pydantic import BaseModel
+from datetime import datetime
+from typing import List, Optional
+from dotenv import load_dotenv
+
+from ai_service import prioritize_tasks_with_ai
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# Database Model
+class TaskModel(Base):
+    __tablename__ = "tasks"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(255), nullable=False)
+    description = Column(Text)
+    deadline = Column(DateTime)
+    priority = Column(String(50))
+    status = Column(String(50), default="Pending")
+    ai_order = Column(Integer, default=0)
+
+# Automatically create table if it doesn't exist
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="Smart Task Manager API")
+
+# Enable CORS for when we connect the React app tomorrow
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Pydantic validation schemas
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    deadline: Optional[datetime] = None
+    priority: str
+
+# DB Dependency injection
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+@app.post("/tasks")
+def create_task(task: TaskCreate, db: Session = Depends(get_db)):
+    db_task = TaskModel(**task.dict())
+    db.add(db_task)
+    db.commit()
+    db.refresh(db_task)
+    return db_task
+
+@app.get("/tasks")
+def get_tasks(db: Session = Depends(get_db)):
+    # Pull items sorted by AI preference order, then by creation
+    return db.query(TaskModel).order_by(TaskModel.ai_order.asc(), TaskModel.id.desc()).all()
+
+@app.post("/tasks/optimize")
+def optimize_tasks(db: Session = Depends(get_db)):
+    # Grab all uncompleted tasks
+    tasks = db.query(TaskModel).filter(TaskModel.status == "Pending").all()
+    if not tasks:
+        raise HTTPException(status_code=400, detail="No pending tasks available to optimize.")
+    
+    # Map objects to raw dictionary arrays for the LLM
+    tasks_data = [
+        {"id": t.id, "title": t.title, "description": t.description, "deadline": t.deadline, "priority": t.priority} 
+        for t in tasks
+    ]
+    
+    # Dispatch payload to LangChain + Gemini
+    ordered_ids = prioritize_tasks_with_ai(tasks_data)
+    
+    # Update position rankings in database
+    for index, task_id in enumerate(ordered_ids):
+        db.query(TaskModel).filter(TaskModel.id == task_id).update({"ai_order": index + 1})
+    
+    db.commit()
+    return {"status": "success", "optimized_order": ordered_ids}
+
+@app.put("/tasks/{task_id}/complete")
+def complete_task(task_id: int, db: Session = Depends(get_db)):
+    db.query(TaskModel).filter(TaskModel.id == task_id).update({"status": "Completed"})
+    db.commit()
+    return {"status": "success", "message": f"Task {task_id} marked complete"}
+
+from ai_service import prioritize_tasks_with_ai, breakdown_task_with_ai
+
+# Add this endpoint under your other routes
+@app.post("/tasks/{task_id}/breakdown")
+def breakdown_task(task_id: int, db: Session = Depends(get_db)):
+    task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    # Get the checklist array from Gemini
+    sub_tasks = breakdown_task_with_ai(task.title, task.description)
+    
+    return {"status": "success", "sub_tasks": sub_tasks}
+
+
+@app.delete("/tasks/{task_id}")
+def delete_task(task_id: int, db: Session = Depends(get_db)):
+    task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    db.delete(task)
+    db.commit()
+    return {"status": "success", "message": f"Task {task_id} successfully deleted"}

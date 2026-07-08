@@ -1,0 +1,13 @@
+# Python environment (Backend)
+backend/venv/
+backend/__pycache__/
+backend/.env
+
+# Node modules (Frontend)
+frontend/node_modules/
+frontend/dist/
+frontend/.eslintcache
+
+# Local configurations
+.DS_Store
+Thumbs.db
