@@ -117,7 +117,7 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
     return {"status": "success", "message": f"Task {task_id} successfully deleted"}
 
 
-# --- FIXED FRONTEND ROUTING & CACHE CONTROL BLOCK ---
+# --- FINAL SANITIZED FRONTEND ROUTING BLOCK ---
 b_dir = os.path.dirname(os.path.abspath(__file__))
 dist_dir = os.path.join(b_dir, "dist")
 
@@ -132,7 +132,10 @@ async def get_favicon():
         return FileResponse(fav_path)
     raise HTTPException(status_code=404, detail="Favicon missing")
 
-# 2. Catch-all route for SPA view reloads (Forces headers to bypass stale CDN/browser caches)
+# 2. Mount static folder first so the browser can read the internal /assets scripts/styles
+app.mount("/public", StaticFiles(directory=os.path.join(dist_dir, "public")), name="public")
+
+# 3. Catch-all route for SPA view reloads (Forces headers to bypass stale CDN/browser caches)
 @app.get("/{catchall:path}")
 async def serve_frontend(catchall: str):
     # Check if the requested path matches an actual API endpoint prefix; if so, skip static rendering
@@ -150,6 +153,3 @@ async def serve_frontend(catchall: str):
             }
         )
     raise HTTPException(status_code=404, detail="Frontend build missing")
-
-# 3. Mount assets/static directory LAST so it doesn't intercept primary database API endpoints
-app.mount("/", StaticFiles(directory=dist_dir, html=True), name="static")
