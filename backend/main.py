@@ -1,4 +1,5 @@
 import os
+import sys
 import jwt
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -13,8 +14,13 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 
-# AI imports
-from ai_services import prioritize_tasks_with_ai, breakdown_task_with_ai
+# Fix absolute path lookup for local modules like ai_service
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+# AI imports from local directory
+from ai_service import prioritize_tasks_with_ai, breakdown_task_with_ai
 
 load_dotenv()
 
@@ -44,6 +50,8 @@ class TaskModel(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
 
+# --- TEMPORARY WIPE AND CREATE INITIALIZATION ---
+# Base.metadata.drop_all(bind=engine) # Keeping this commented out as we planned
 Base.metadata.create_all(bind=engine)
 
 
@@ -71,7 +79,7 @@ class UserAuth(BaseModel):
     password: str
 
 
-# --- DATABASE DEPENDENCY (Moved Upfront for Scope) ---
+# --- DATABASE DEPENDENCY ---
 
 def get_db():
     db = SessionLocal()
@@ -203,8 +211,7 @@ def delete_task(task_id: int, db: Session = Depends(get_db), current_user: UserM
 
 
 # --- FRONTEND ROUTING BLOCK ---
-b_dir = os.path.dirname(os.path.abspath(__file__))
-dist_dir = os.path.join(b_dir, "dist")
+dist_dir = os.path.join(current_dir, "dist")
 
 os.makedirs(dist_dir, exist_ok=True)
 
