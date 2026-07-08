@@ -117,7 +117,7 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
     return {"status": "success", "message": f"Task {task_id} successfully deleted"}
 
 
-# --- FINAL SANITIZED FRONTEND ROUTING BLOCK ---
+# --- FIXED FRONTEND ROUTING BLOCK ---
 b_dir = os.path.dirname(os.path.abspath(__file__))
 dist_dir = os.path.join(b_dir, "dist")
 
@@ -132,16 +132,24 @@ async def get_favicon():
         return FileResponse(fav_path)
     raise HTTPException(status_code=404, detail="Favicon missing")
 
-# 2. Mount static folder first so the browser can read the internal /assets scripts/styles
-app.mount("/public", StaticFiles(directory=os.path.join(dist_dir, "public")), name="public")
+# 2. Mount assets directory so the browser can load JS and CSS bundles
+assets_dir = os.path.join(dist_dir, "assets")
+if os.path.exists(assets_dir):
+    app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-# 3. Catch-all route for SPA view reloads (Forces headers to bypass stale CDN/browser caches)
+# 3. Catch-all route for SPA view reloads and file routing
 @app.get("/{catchall:path}")
 async def serve_frontend(catchall: str):
-    # Check if the requested path matches an actual API endpoint prefix; if so, skip static rendering
+    # Skip static rendering if the path is an API endpoint
     if catchall.startswith("tasks"):
         raise HTTPException(status_code=404, detail="API endpoint not found")
         
+    # If the frontend asks for public/taskfavicon.jpg, serve it directly from the root dist folder
+    if "taskfavicon.jpg" in catchall:
+        fav_path = os.path.join(dist_dir, "taskfavicon.jpg")
+        if os.path.exists(fav_path):
+            return FileResponse(fav_path)
+
     index_path = os.path.join(dist_dir, "index.html")
     if os.path.exists(index_path):
         return FileResponse(
