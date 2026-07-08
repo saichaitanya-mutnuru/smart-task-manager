@@ -1,18 +1,19 @@
 import os
+import jwt
+from datetime import datetime, timedelta
+from typing import List, Optional
+from dotenv import load_dotenv
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-# ADDED: ForeignKey imported to link tasks to users
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
-from pydantic import BaseModel
-from datetime import datetime
-from typing import List, Optional
-from dotenv import load_dotenv
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from passlib.context import CryptContext
 
-# Cleaned up imports at the top
+# AI imports
 from ai_service import prioritize_tasks_with_ai, breakdown_task_with_ai
 
 load_dotenv()
@@ -40,14 +41,11 @@ class TaskModel(Base):
     priority = Column(String(50))
     status = Column(String(50), default="Pending")
     ai_order = Column(Integer, default=0)
-    
-    # NEW: Links each task row to a specific user row
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
 
 
-Base.metadata.drop_all(bind=engine)
-
 Base.metadata.create_all(bind=engine)
+
 
 app = FastAPI(title="Smart Task Manager API")
 
@@ -59,14 +57,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Pydantic validation schemas
+
+# --- VALIDATION SCHEMAS ---
+
 class TaskCreate(BaseModel):
     title: str
     description: Optional[str] = None
     deadline: Optional[datetime] = None
     priority: str
 
-# DB Dependency injection
+class UserAuth(BaseModel):
+    username: str
+    password: str
+
+
+# --- DATABASE DEPENDENCY (Moved Upfront for Scope) ---
+
 def get_db():
     db = SessionLocal()
     try:
@@ -74,21 +80,82 @@ def get_db():
     finally:
         db.close()
 
+
+# --- SECURITY & CONFIGURATIONS ---
+
+SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-key-change-this-in-production")
+ALGORITHM = "HS256"
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def hash_pw(pw: str) -> str:
+    return pwd_context.hash(pw)
+
+def verify_pw(plain: str, hashed: str) -> bool:
+    return pwd_context.verify(plain, hashed)
+
+def create_token(data: dict) -> str:
+    to_encode = data.copy()
+    to_encode.update({"exp": datetime.utcnow() + timedelta(days=1)})
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def get_current_user(db: Session = Depends(get_db), token: str = None):
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        uid = payload.get("sub")
+        if uid is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+        
+    user = db.query(UserModel).filter(UserModel.id == uid).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+# --- AUTHENTICATION ENDPOINTS ---
+
+@app.post("/register")
+def register(user: UserAuth, db: Session = Depends(get_db)):
+    exists = db.query(UserModel).filter(UserModel.username == user.username).first()
+    if exists:
+        raise HTTPException(status_code=400, detail="Username already taken")
+    
+    new_user = UserModel(username=user.username, hashed_password=hash_pw(user.password))
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return {"status": "success", "message": "User registered successfully"}
+
+@app.post("/login")
+def login(user: UserAuth, db: Session = Depends(get_db)):
+    db_user = db.query(UserModel).filter(UserModel.username == user.username).first()
+    if not db_user or not verify_pw(user.password, db_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Incorrect username or password")
+    
+    token = create_token({"sub": db_user.id})
+    return {"status": "success", "token": token, "username": db_user.username}
+
+
+# --- USER ROUTE ENDPOINTS (TASKS ISOLATED PER USER) ---
+
 @app.post("/tasks")
-def create_task(task: TaskCreate, db: Session = Depends(get_db)):
-    db_task = TaskModel(**task.dict())
+def create_task(task: TaskCreate, db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
+    db_task = TaskModel(**task.dict(), user_id=current_user.id)
     db.add(db_task)
     db.commit()
     db.refresh(db_task)
     return db_task
 
 @app.get("/tasks")
-def get_tasks(db: Session = Depends(get_db)):
-    return db.query(TaskModel).order_by(TaskModel.ai_order.asc(), TaskModel.id.desc()).all()
+def get_tasks(db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
+    return db.query(TaskModel).filter(TaskModel.user_id == current_user.id).order_by(TaskModel.ai_order.asc(), TaskModel.id.desc()).all()
 
 @app.post("/tasks/optimize")
-def optimize_tasks(db: Session = Depends(get_db)):
-    tasks = db.query(TaskModel).filter(TaskModel.status == "Pending").all()
+def optimize_tasks(db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
+    tasks = db.query(TaskModel).filter(TaskModel.user_id == current_user.id, TaskModel.status == "Pending").all()
     if not tasks:
         raise HTTPException(status_code=400, detail="No pending tasks available to optimize.")
     
@@ -100,20 +167,24 @@ def optimize_tasks(db: Session = Depends(get_db)):
     ordered_ids = prioritize_tasks_with_ai(tasks_data)
     
     for index, task_id in enumerate(ordered_ids):
-        db.query(TaskModel).filter(TaskModel.id == task_id).update({"ai_order": index + 1})
+        db.query(TaskModel).filter(TaskModel.id == task_id, TaskModel.user_id == current_user.id).update({"ai_order": index + 1})
     
     db.commit()
     return {"status": "success", "optimized_order": ordered_ids}
 
 @app.put("/tasks/{task_id}/complete")
-def complete_task(task_id: int, db: Session = Depends(get_db)):
-    db.query(TaskModel).filter(TaskModel.id == task_id).update({"status": "Completed"})
+def complete_task(task_id: int, db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
+    task = db.query(TaskModel).filter(TaskModel.id == task_id, TaskModel.user_id == current_user.id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+        
+    task.status = "Completed"
     db.commit()
     return {"status": "success", "message": f"Task {task_id} marked complete"}
 
 @app.post("/tasks/{task_id}/breakdown")
-def breakdown_task(task_id: int, db: Session = Depends(get_db)):
-    task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+def breakdown_task(task_id: int, db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
+    task = db.query(TaskModel).filter(TaskModel.id == task_id, TaskModel.user_id == current_user.id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     
@@ -121,8 +192,8 @@ def breakdown_task(task_id: int, db: Session = Depends(get_db)):
     return {"status": "success", "sub_tasks": sub_tasks}
 
 @app.delete("/tasks/{task_id}")
-def delete_task(task_id: int, db: Session = Depends(get_db)):
-    task = db.query(TaskModel).filter(TaskModel.id == task_id).first()
+def delete_task(task_id: int, db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
+    task = db.query(TaskModel).filter(TaskModel.id == task_id, TaskModel.user_id == current_user.id).first()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
     
@@ -131,14 +202,12 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
     return {"status": "success", "message": f"Task {task_id} successfully deleted"}
 
 
-# --- FIXED FRONTEND ROUTING BLOCK ---
+# --- FRONTEND ROUTING BLOCK ---
 b_dir = os.path.dirname(os.path.abspath(__file__))
 dist_dir = os.path.join(b_dir, "dist")
 
-# Ensure build target folder exists cleanly
 os.makedirs(dist_dir, exist_ok=True)
 
-# 1. Explicit endpoint handling the root browser favicon lookup
 @app.get("/taskfavicon.jpg", include_in_schema=False)
 async def get_favicon():
     fav_path = os.path.join(dist_dir, "taskfavicon.jpg")
@@ -146,19 +215,15 @@ async def get_favicon():
         return FileResponse(fav_path)
     raise HTTPException(status_code=404, detail="Favicon missing")
 
-# 2. Mount assets directory so the browser can load JS and CSS bundles
 assets_dir = os.path.join(dist_dir, "assets")
 if os.path.exists(assets_dir):
     app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-# 3. Catch-all route for SPA view reloads and file routing
 @app.get("/{catchall:path}")
 async def serve_frontend(catchall: str):
-    # Skip static rendering if the path is an API endpoint
-    if catchall.startswith("tasks"):
-        raise HTTPException(status_code=404, detail="API endpoint not found")
+    if catchall.startswith("tasks") or catchall.startswith("register") or catchall.startswith("login"):
+        raise HTTPException(status_code=404, detail="Endpoint not found")
         
-    # If the frontend asks for public/taskfavicon.jpg, serve it directly from the root dist folder
     if "taskfavicon.jpg" in catchall:
         fav_path = os.path.join(dist_dir, "taskfavicon.jpg")
         if os.path.exists(fav_path):
