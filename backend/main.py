@@ -118,24 +118,24 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 
-# Get absolute path to the dist folder inside backend directory
 b_dir = os.path.dirname(os.path.abspath(__file__))
 dist_dir = os.path.join(b_dir, "dist")
-assets_dir = os.path.join(dist_dir, "assets")
 
-# Create directories defensively if they don't exist yet to prevent boot crashes
-os.makedirs(assets_dir, exist_ok=True)
+# Ensure build target folder exists cleanly
+os.makedirs(dist_dir, exist_ok=True)
 
-# Create a placeholder index.html if it's missing during the initialization phase
-index_path = os.path.join(dist_dir, "index.html")
-if not os.path.exists(index_path):
-    with open(index_path, "w") as f:
-        f.write("<!DOCTYPE html><html><body>Building UI Assets... Please refresh in a few seconds.</body></html>")
+# Endpoint explicitly handling the root browser favicon lookup
+@app.get("/taskfavicon.jpg", include_in_schema=False)
+async def get_favicon():
+    fav_path = os.path.join(dist_dir, "taskfavicon.jpg")
+    if os.path.exists(fav_path):
+        return FileResponse(fav_path)
+    return HTTPException(status_code=404)
 
-# 1. Mount the assets folder for CSS/JS scripts
-app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+# Mount the entire directory to handle everything else (assets, scripts, layout images)
+app.mount("/", StaticFiles(directory=dist_dir, html=True), name="static")
 
-# 2. Catch-all route to serve your index.html homepage
+# Catch-all route for SPA view reloads
 @app.get("/{catchall:path}")
 async def serve_frontend(catchall: str):
-    return FileResponse(index_path)
+    return FileResponse(os.path.join(dist_dir, "index.html"))
