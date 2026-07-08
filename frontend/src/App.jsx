@@ -3,7 +3,7 @@ import axios from 'axios';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
 // Base URL configuration for Axios
-const API_BASE = 'https://smart-task-manager-backend-nv00.onrender.com/';
+const API_BASE = '';
 
 function App() {
   const [tasks, setTasks] = useState([]);
