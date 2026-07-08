@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 
 # AI imports
-from ai_service import prioritize_tasks_with_ai, breakdown_task_with_ai
+from ai_services import prioritize_tasks_with_ai, breakdown_task_with_ai
 
 load_dotenv()
 
