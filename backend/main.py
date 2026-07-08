@@ -116,25 +116,40 @@ def delete_task(task_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"status": "success", "message": f"Task {task_id} successfully deleted"}
 
-# --- STATIC FRONTEND ROUTING BLOCK ---
+
+# --- FIXED FRONTEND ROUTING & CACHE CONTROL BLOCK ---
 b_dir = os.path.dirname(os.path.abspath(__file__))
 dist_dir = os.path.join(b_dir, "dist")
 
 # Ensure build target folder exists cleanly
 os.makedirs(dist_dir, exist_ok=True)
 
-# Endpoint explicitly handling the root browser favicon lookup
+# 1. Explicit endpoint handling the root browser favicon lookup
 @app.get("/taskfavicon.jpg", include_in_schema=False)
 async def get_favicon():
     fav_path = os.path.join(dist_dir, "taskfavicon.jpg")
     if os.path.exists(fav_path):
         return FileResponse(fav_path)
-    raise HTTPException(status_code=404, detail="Favicon missing")  # FIXED: Now correctly raising
+    raise HTTPException(status_code=404, detail="Favicon missing")
 
-# Mount the entire directory to handle everything else (assets, scripts, layout images)
-app.mount("/", StaticFiles(directory=dist_dir, html=True), name="static")
-
-# Catch-all route for SPA view reloads
+# 2. Catch-all route for SPA view reloads (Forces headers to bypass stale CDN/browser caches)
 @app.get("/{catchall:path}")
 async def serve_frontend(catchall: str):
-    return FileResponse(os.path.join(dist_dir, "index.html"))
+    # Check if the requested path matches an actual API endpoint prefix; if so, skip static rendering
+    if catchall.startswith("tasks"):
+        raise HTTPException(status_code=404, detail="API endpoint not found")
+        
+    index_path = os.path.join(dist_dir, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(
+            index_path,
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+        )
+    raise HTTPException(status_code=404, detail="Frontend build missing")
+
+# 3. Mount assets/static directory LAST so it doesn't intercept primary database API endpoints
+app.mount("/", StaticFiles(directory=dist_dir, html=True), name="static")
